@@ -6,7 +6,7 @@ In order to produce the confidence regions of cosmological parameters, the provi
 
 ### Citation
 
->>>> # If you are going to use this code, please make sure to reference the work `arXiv:2411.00095`.
+If you are going to use this code, please make sure to reference the work `arXiv:2411.00095`.
 
 
 ### Usage
