@@ -1,0 +1,8 @@
+# from D. W. Pesce et al 2020 ApJL 891 L1
+#Galaxy	#angular_Distance(Mpc)	#Error_distance	#Velocity(km s^1)	#Error_velocity
+UGC-3789	51.5	4.25	3319.9	0.8
+NGC-6264	132.1	19	10192.6	0.8
+NGC-6323	109.4	28.5	7801.5	1.5
+NGC-5765b	112.2	5.25	8525.7	0.7
+CGCG-074-064	87.6	7.55	7172.2	1.9
+NGC-4258	7.58	0.11	679.3	0.4
