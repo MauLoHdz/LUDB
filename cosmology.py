@@ -47,7 +47,7 @@ def Dl(z,Om0,H0,w0,wa):                                                        #
     return ((1+z)**2)*DA(z,Om0,H0,w0,wa)
 
 
-def m(z,Om0,H0,w0,wa):                                                         # Distance modulus 
+def mu(z,Om0,H0,w0,wa):                                                         # Distance modulus 
     return 5*np.log10(Dl(z,Om0,H0,w0,wa))+25 
 
 
