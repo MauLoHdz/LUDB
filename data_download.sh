@@ -4,8 +4,7 @@ cd Data
 
 # DESI data from the Cobaya repository
 git clone https://github.com/CobayaSampler/bao_data.git
-mv bao_data BAO-DESI
-
+mv bao_data BAO_data
 
 
 # Union3 data from a repository by David Rubin
