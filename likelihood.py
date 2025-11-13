@@ -346,28 +346,221 @@ def make_chi2_DESI_with_mask(mask):
 
 chi2_DESI = make_chi2_DESI_with_mask(mask_DESI)
 
+
 ############################
 ############################
 #
-# Total Chi square for Base+SNe
+# Chi square for Planck Distance Priors (DP)
+#
+############################
+############################
+
+# Internal constants and tolerances for the DP block
+_dp_Tcmb = 2.7255     # Kelvin
+_DP_EPSABS = 1e-8
+_DP_EPSREL = 1e-8
+
+# --- Helper functions for DP only ------
+
+def _dp_z_eq(Om0, h):
+    """Redshift at matter-radiation equality ."""
+    return 2.5e4 * Om0 * h**2 * (_dp_Tcmb / 2.7)**(-4)
+
+def _dp_Omega_r(Om0, h):
+    """Radiation density parameter today (using z_eq)."""
+    return Om0 / (1.0 + _dp_z_eq(Om0, h))
+
+def _dp_z_decou(Omega_bh2, Om0h2):
+    """Photon decoupling redshift z*."""
+    g1 = 0.0738 * Omega_bh2**(-0.238) / (1.0 + 39.5 * Omega_bh2**0.763)
+    g2 = 0.560 / (1.0 + 21.1 * Omega_bh2**1.81)
+    return 1048.0 * (1.0 + 0.00124 * Omega_bh2**(-0.738)) * (1.0 + g1 * Om0h2**g2)
+
+def _dp_Ez(z, Om0, Or, Ode0, w0, wa):
+    """
+    E(z) = H(z)/H0 for flat w0waCDM (CPL).
+    Dark energy factor: f_de(a) = a^{-3(1+w0+wa)} * exp[3*wa*(a-1)] with a = 1/(1+z).
+    """
+    a = 1.0 / (1.0 + z)
+    f_de = a**(-3.0 * (1.0 + w0 + wa)) * np.exp(3.0 * wa * (a - 1.0))
+    return np.sqrt(Or * (1.0 + z)**4 + Om0 * (1.0 + z)**3 + Ode0 * f_de)
+
+def _dp_comoving_distance(z, Om0, Or, Ode0, H0, w0, wa):
+    """Line-of-sight comoving distance chi(z) in Mpc for w0waCDM."""
+    integrand = lambda zp: 1.0 / _dp_Ez(zp, Om0, Or, Ode0, w0, wa)
+    val, _ = integrate.quad(integrand, 0.0, z, epsabs=_DP_EPSABS, epsrel=_DP_EPSREL)
+    return (c / H0) * val
+
+def _dp_DA(z, Om0, Or, Ode0, H0, w0, wa):
+    """Angular-diameter distance D_A(z) = chi(z)/(1+z) for w0waCDM."""
+    return _dp_comoving_distance(z, Om0, Or, Ode0, H0, w0, wa) / (1.0 + z)
+
+# Photon density for r_s
+_dp_Omega_gamma_h2 = (3.0 / (4.0 * 31500.0)) * (_dp_Tcmb / 2.7)**4
+
+def _dp_r_sound(z, Omega_bh2, Om0, Or, Ode0, H0, w0, wa):
+    """
+    Sound horizon r_s(z) in Mpc. Dark energy is negligible at early times, but included for consistency.
+    Implemented in scale factor a, where 1+z = 1/a.
+    """
+    def E_a(a):
+        f_de = a**(-3.0 * (1.0 + w0 + wa)) * np.exp(3.0 * wa * (a - 1.0))
+        return np.sqrt(Or * a**(-4) + Om0 * a**(-3) + Ode0 * f_de)
+
+    def integrand(a):
+        Rb = 3.0 * Omega_bh2 / (4.0 * _dp_Omega_gamma_h2) * a
+        return 1.0 / (a**2 * E_a(a) * np.sqrt(3.0 * (1.0 + Rb)))
+
+    a_max = 1.0 / (1.0 + z)
+    val, _ = integrate.quad(integrand, 0.0, a_max, epsabs=_DP_EPSABS, epsrel=_DP_EPSREL)
+    return (c / H0) * val
+
+def _dp_compute_R_lA(Om0, H0, w0, wa, Omega_bh2):
+    """
+    Compute (R, l_A) at the photon decoupling redshift z* for flat w0waCDM.
+    R    = (1+z*) * D_A(z*) * H0 * sqrt(Om0) / c
+    l_A  = (1+z*) * pi * D_A(z*) / r_s(z*)
+    """
+    h = H0 / 100.0
+    Om0h2 = Om0 * h**2
+    zstar = _dp_z_decou(Omega_bh2, Om0h2)
+    Or = _dp_Omega_r(Om0, h)
+    Ode0 = 1.0 - Om0 - Or  # flatness
+    Da = _dp_DA(zstar, Om0, Or, Ode0, H0, w0, wa)
+    rs = _dp_r_sound(zstar, Omega_bh2, Om0, Or, Ode0, H0, w0, wa)
+    Rval = (1.0 + zstar) * Da * (H0 * np.sqrt(Om0)) / c
+    l_A  = (1.0 + zstar) * np.pi * Da / rs
+    return Rval, l_A
+
+# Planck 2018 (base LCDM) distance-prior means and covariance (R, l_A, Omega_b h^2)
+_R_mean,  _sig_R     = 1.7502,  0.0046
+_lA_mean, _sig_lA    = 301.471, 0.0895
+_Obh2_mean, _sig_Obh2 = 0.02236, 0.00015
+
+_corr_DP = np.array([
+    [ 1.00,  0.46, -0.66 ],
+    [ 0.46,  1.00, -0.33 ],
+    [-0.66, -0.33,  1.00 ],
+])
+_sigmas_DP = np.array([_sig_R, _sig_lA, _sig_Obh2])
+_cov_DP = np.outer(_sigmas_DP, _sigmas_DP) * _corr_DP
+_inv_cov_DP = np.linalg.inv(_cov_DP)
+_dvec_DP = np.array([_R_mean, _lA_mean, _Obh2_mean])
+
+def chi2_PlanckDP(Om0, H0, w0, wa, Omega_bh2):
+    """
+    Planck distance priors chi-squared:
+    """
+    if not bin_range.Planck_distance_priors:
+        return 0.0
+    R_mod, lA_mod = _dp_compute_R_lA(Om0, H0, w0, wa, Omega_bh2)
+    x = np.array([R_mod, lA_mod, Omega_bh2])
+    r = x - _dvec_DP
+    return float(r @ (_inv_cov_DP @ r))
+
+
+
+############################
+############################
+#
+# Dynamic total chi2 builder (auto-selects params)
 #
 ############################
 ############################ 
 
 
-# Base+PantheonPlus
-def chi2_Base_PantheonPlus(arg):
-    v1,v2,v3,v4,v5,v6,Om0,H0,w0,wa,M,rd=arg
-    return chi2_maser(v1,v2,v3,v4,v5,v6,Om0,H0,w0,wa)+chi2_CC(Om0,H0,w0,wa)+chi2_Pantheon(Om0,H0,w0,wa,M)+chi2_DESI(Om0,H0,w0,wa,rd)
+def build_total_chi2(which_sne="PantheonPlus"):
+    """
+    Create a total chi2(theta) callable and the ordered list of parameter names
+    based on which datasets are active under the current bin [a,b] and toggles.
 
-# Base+Union3
-def chi2_Base_Union3(arg):
-    v1,v2,v3,v4,v5,v6,Om0,H0,w0,wa,M,rd=arg
-    return chi2_maser(v1,v2,v3,v4,v5,v6,Om0,H0,w0,wa)+chi2_CC(Om0,H0,w0,wa)+chi2_Union3(Om0,H0,w0,wa,M)+chi2_DESI(Om0,H0,w0,wa,rd)
-    
-# Base+DES
-def chi2_Base_DES(arg):
-    v1,v2,v3,v4,v5,v6,Om0,H0,w0,wa,M,rd=arg
-    return chi2_maser(v1,v2,v3,v4,v5,v6,Om0,H0,w0,wa)+chi2_CC(Om0,H0,w0,wa)+chi2_DES(Om0,H0,w0,wa,M)+chi2_DESI(Om0,H0,w0,wa,rd)
+    which_sne in {"PantheonPlus", "Union3", "DES"} selects which SN sample to use.
+    Returns:
+      chi2_total(theta): callable that sums only active datasets
+      param_names: list[str] with the exact parameter order expected by chi2_total
+    """
 
+    # ---- 1) Detect active datasets under current bin ----
+    HAS_CC        = (zbin_CC.size > 0)
+    HAS_PANTHEON  = (which_sne == "PantheonPlus") and ('zcmb_bin_Pantheon' in globals()) and (zcmb_bin_Pantheon.size > 0)
+    HAS_UNION3    = (which_sne == "Union3")       and ('zcmb_bin_Union3'   in globals()) and (zcmb_bin_Union3.size   > 0)
+    HAS_DES_SN    = (which_sne == "DES")          and ('zcmb_bin_DES'      in globals()) and (zcmb_bin_DES.size      > 0)
+    HAS_MASER     = (a <= 0.01)                   # tu chi2_maser ya retorna 0 si no aplica
+    HAS_DESI      = bool(np.any(mask_DESI))
+    HAS_DP        = bool(getattr(bin_range, "Planck_distance_priors", False))
 
+    # Sanity: exactamente un sample SN
+    if sum([HAS_PANTHEON, HAS_UNION3, HAS_DES_SN]) != 1:
+        raise ValueError("Pick exactly one SN sample via which_sne={'PantheonPlus','Union3','DES'} and ensure it is active in this bin.")
+
+    # ---- 2) Build the parameter ordering ----
+    param_names = []
+
+    # (i) Megamasers nuisance velocities if needed
+    if HAS_MASER:
+        param_names += ["v1","v2","v3","v4","v5","v6"]
+
+    # (ii) Core cosmological parameters (always needed if there is any dataset)
+    param_names += ["Om0","H0","w0","wa"]
+
+    # (iii) SN absolute-magnitude offset (M) if any SN dataset is used
+    if HAS_PANTHEON or HAS_UNION3 or HAS_DES_SN:
+        param_names += ["M"]
+
+    # (iv) DESI BAO sound horizon if DESI is active
+    if HAS_DESI:
+        param_names += ["rd"]
+
+    # (v) Planck DP Omega_b h^2 if DP is toggled on
+    if HAS_DP:
+        param_names += ["Omega_bh2"]
+
+    # ---- 3) Pick the SN chi2 to use ----
+    def _sn_term(Om0,H0,w0,wa,M):
+        if HAS_PANTHEON:
+            return chi2_Pantheon(Om0,H0,w0,wa,M)
+        if HAS_UNION3:
+            return chi2_Union3(Om0,H0,w0,wa,M)
+        if HAS_DES_SN:
+            return chi2_DES(Om0,H0,w0,wa,M)
+        return 0.0  # should not happen
+
+    # ---- 4) Build the callable that unpacks theta by param_names and sums active terms ----
+    name_to_idx = {name:i for i,name in enumerate(param_names)}
+
+    def chi2_total(theta):
+        # Megamasers
+        if HAS_MASER:
+            v = [theta[name_to_idx[f"v{i}"]] for i in range(1,7)]
+        # Core
+        Om0 = theta[name_to_idx["Om0"]]
+        H0  = theta[name_to_idx["H0"]]
+        w0  = theta[name_to_idx["w0"]]
+        wa  = theta[name_to_idx["wa"]]
+        # SN offset
+        M   = theta[name_to_idx["M"]] if ("M" in name_to_idx) else None
+        # DESI r_d
+        rd  = theta[name_to_idx["rd"]] if ("rd" in name_to_idx) else None
+        # Planck DP Ω_b h^2
+        Obh2 = theta[name_to_idx["Omega_bh2"]] if ("Omega_bh2" in name_to_idx) else None
+
+        chi2_sum = 0.0
+
+        if HAS_MASER:
+            chi2_sum += chi2_maser(*v, Om0, H0, w0, wa)
+
+        if HAS_CC:
+            chi2_sum += chi2_CC(Om0, H0, w0, wa)
+
+        if (HAS_PANTHEON or HAS_UNION3 or HAS_DES_SN) and (M is not None):
+            chi2_sum += _sn_term(Om0, H0, w0, wa, M)
+
+        if HAS_DESI and (rd is not None):
+            chi2_sum += chi2_DESI(Om0, H0, w0, wa, rd)
+
+        if HAS_DP and (Obh2 is not None):
+            chi2_sum += chi2_PlanckDP(Om0, H0, w0, wa, Obh2)
+
+        return float(chi2_sum)
+
+    return chi2_total, param_names
