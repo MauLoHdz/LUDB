@@ -21,5 +21,3 @@ mv DataRelease PantheonPlusSH0ES
 
 # DES-SNe data from the DES-science repository
 git clone https://github.com/des-science/DES-SN5YR
-cd DES-SN5YR/4_DISTANCES_COVMAT
-gunzip STAT+SYS.txt.gz

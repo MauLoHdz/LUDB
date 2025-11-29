@@ -75,9 +75,9 @@ def chi2_CC(Om0,H0,w0,wa):
 
 file_Union3   = fits.open(script_dir+"/Data/union3_release/mu_mat_union3_cosmo=2_mu.fits")
 data_Union3   = file_Union3[0].data
-zcmb_Union3   = data_Union3[0,1:]                                                              # Redshift corrected for CMB
-zhel_Union3   = data_Union3[0,1:]                                                              # Heliocentric redshift 
-mb_Union3     = data_Union3[1:,0]                                                                # data of the apparent magnitude mb
+zcmb_Union3   = data_Union3[0,1:]                                                          # Redshift corrected for CMB
+zhel_Union3   = data_Union3[0,1:]                                                          # Heliocentric redshift 
+mb_Union3     = data_Union3[1:,0]                                                          # data of the apparent magnitude mb
 cov_matUnion3 = np.linalg.inv(data_Union3[1:,1:])                                          # Covariance matrix
 
 mask_Union3 = (zcmb_Union3<=b) & (zcmb_Union3>a)                   # mask to separate data
@@ -86,7 +86,7 @@ mask_Union3 = (zcmb_Union3<=b) & (zcmb_Union3>a)                   # mask to sep
 
 zcmb_bin_Union3   = zcmb_Union3[mask_Union3]
 mb_bin_Union3     = mb_Union3[mask_Union3]
-covbin_mat_Union3 = cov_matUnion3[mask_Union3, :][:, mask_Union3]  # Reconstruct the covariance matrix according to the binned data
+covbin_mat_Union3 = cov_matUnion3[mask_Union3, :][:, mask_Union3]     # Reconstruct the covariance matrix according to the binned data
 inv_cov_Union3    = np.linalg.inv(covbin_mat_Union3)                  # Inverse of the covariance matrix
 
 # Theoretical apparent magnitude 
@@ -107,46 +107,76 @@ def chi2_Union3(Om0,H0,w0,wa,M):
 ############################
 ############################
 #
-# Chi square for SNe Ia data - DES 
+# Chi square for SNe Ia data - DES-Dovekie
 #
 ############################
 ############################
 
-Data_path = script_dir+"/Data/DES-SN5YR/4_DISTANCES_COVMAT/DES-SN5YR_HD+MetaData.csv"
-data_DES  = pan.read_csv(Data_path,comment='#')
+def load_dovekie_ascii(path):
+    """
+    Reads the DES-Dovekie_HD.csv SNANA-style ASCII file.
+    """
+    with open(path, "r") as f:
+        lines = f.readlines()
+        
+    for i, line in enumerate(lines):
+        if line.startswith("VARNAMES:"):
+            header_line = i
+            break
+    else:
+        raise RuntimeError("VARNAMES: not found in file")
+    columns = (
+        lines[header_line]
+        .replace("VARNAMES:", "")
+        .strip()
+        .split()
+    )
+
+    df = pan.read_csv(
+        path,
+        comment="#",
+        skiprows=header_line + 1,
+        sep=r"\s+",         
+        names=columns,
+        engine="python"
+    )
+
+    return df
+    
+path = script_dir + "/Data/DES-SN5YR/4_DISTANCES_COVMAT/DES-Dovekie_HD.csv"
+df_DES = load_dovekie_ascii(path)
 
 # Import the data 
 
-mb_DES    = data_DES.MU.values                         # Data of the apparent magnitude mb
-mberr_DES = data_DES.MUERR_FINAL.values             # Error in mb 
-zcmb_DES  = data_DES.zCMB.values                     # Redshift corrected for CMB
-zhel_DES  = data_DES.zHEL.values                     # Heliocentric redshift  
-zHD_DES   = data_DES.zHD.values                       # Hubble Diagram Redshift (with CMB and VPEC corrections) 
+mu_DES   = df_DES.MU.values     # modulus distance
+zhel_DES = df_DES.zHEL.values   # Heliocentric redshift  
+zHD_DES  = df_DES.zHD.values    # Hubble Diagram Redshift (CMB+Vpec corrected)
 
-# ===============================================================
-# The file format for the covariance has the first line as an integer
-# indicating the number of covariance elements, and the the subsequent
-# lines being the elements.
-# This data file is just the systematic component of the covariance - 
-# we also need to add in the statistical error on the magnitudes
-# that we loaded earlier
-# ===============================================================
+# Import covmat file 
+inv_cov_npz = np.load(script_dir + "/Data/DES-SN5YR/4_DISTANCES_COVMAT/STAT+SYS.npz")  
+inv_cov_vector = inv_cov_npz["cov"]    # Flattened upper triangle of the inverse covariance matrix 
 
-covmat_DES = np.loadtxt(script_dir+"/Data/DES-SN5YR/4_DISTANCES_COVMAT/STAT+SYS.txt",skiprows=1).reshape((1829,1829))
-np.fill_diagonal(covmat_DES,covmat_DES.diagonal()+mberr_DES**2)             
+# Dimension N
+N = int((-1 + np.sqrt(1 + 8 * len(inv_cov_vector))) // 2)
+
+# Built the full matrix
+inv_covmat_DES = np.zeros((N, N))
+inv_covmat_DES[np.triu_indices(N)] = inv_cov_vector
+
+i_lower = np.tril_indices(N, -1)
+inv_covmat_DES[i_lower] = inv_covmat_DES.T[i_lower]
+
 
 # Bin the data using the mask
 
 mask_DES=(zHD_DES<=b) & (zHD_DES>a)          # mask to separate data
 
-
 # Bin the data using the mask
 
 zcmb_bin_DES   = zHD_DES[mask_DES]
 zhel_bin_DES   = zhel_DES[mask_DES]
-mb_bin_DES     = mb_DES[mask_DES]
-covmat_bin_DES = covmat_DES[mask_DES, :][:, mask_DES]
-inv_cov_DES    = np.linalg.inv(covmat_bin_DES)                 # Inverse covariance matrix 
+mu_bin_DES     = mu_DES[mask_DES]
+inv_cov_DES    = inv_covmat_DES[mask_DES, :][:, mask_DES]
 
 # ===============================================================
 # We calculate the comoving distance integral using 
@@ -181,14 +211,14 @@ def DM_anali_DES(Om0, H0, w0, wa):
 def Dl_anali_DES(Om0, H0, w0, wa):
     return (1.0 + zhel_bin_DES) * DM_anali_DES(Om0, H0, w0, wa)
 
-def mb_anali_DES(Om0, H0, w0, wa, M):
-    return 5.0 * np.log10(Dl_anali_DES(Om0, H0, w0, wa)) + 25.0 + M
+def mu_anali_DES(Om0, H0, w0, wa, M):
+    return 5.0 * np.log10(Dl_anali_DES(Om0, H0, w0, wa)) + 25.0 + M  # Offset to absorbs the change in H0
 
 # Construct the chi^2 for SNe - DES 
 def chi2_DES(Om0,H0,w0,wa,M):
-    chi2=0
-    delta=mb_bin_DES-mb_anali_DES(Om0,H0,w0,wa,M)
-    chi2=np.dot(delta,np.dot(inv_cov_DES,delta))
+    chi2  = 0
+    delta = mu_bin_DES-mu_anali_DES(Om0,H0,w0,wa,M)
+    chi2  = np.dot(delta,np.dot(inv_cov_DES,delta))
     return chi2
 
 ############################
